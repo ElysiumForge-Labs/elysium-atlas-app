@@ -1,0 +1,490 @@
+"use client";
+import { useState, useMemo, useEffect, useRef } from "react";
+import { useSelector, useDispatch } from "react-redux";
+import { RootState } from "@/store";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { SHEET_CONTENT_CLASSNAME } from "@/lib/sheetConfig";
+import { Label } from "@/components/ui/label";
+import CustomInput from "@/components/inputs/CustomInput";
+import CustomTextareaPrimary from "@/components/inputs/CustomTextareaPrimary";
+import PrimaryButton from "@/components/ui/PrimaryButton";
+import CancelButton from "@/components/ui/CancelButton";
+import {
+  updateKnowledgeBaseQnA,
+  removeKnowledgeBaseQnA,
+  setKnowledgeBaseQnA,
+} from "@/store/reducers/agentBuilderSlice";
+import OutlineButton from "@/components/ui/OutlineButton";
+import { Trash2, Search, BookOpen } from "lucide-react";
+import TablePaginationControls from "./TablePaginationControls";
+import { useClientSideTablePagination } from "@/hooks/useClientSideTablePagination";
+import { formatDateTime12hr } from "@/utils/formatDate";
+import AgentKbPickFromLibraryDialog, {
+  type AgentKbLibraryPick,
+} from "./kb/AgentKbPickFromLibraryDialog";
+import KbStatusBadge from "./kb/KbStatusBadge";
+import { getQnAAgentKbDisplayStatus } from "@/utils/agentKbUtils";
+import type { QnA } from "@/store/types/AgentBuilderTypes";
+import { toast } from "sonner";
+
+interface KnowledgeBaseQnAListProps {
+  items?: never[];
+  onEdit?: (index: number) => void;
+  onRemove?: (index: number) => void;
+  onAddMore?: () => void;
+}
+
+export default function KnowledgeBaseQnAList({
+  items: _items,
+  onEdit: _onEdit,
+  onRemove: _onRemove,
+  onAddMore,
+}: KnowledgeBaseQnAListProps = {}) {
+  const dispatch = useDispatch();
+  const knowledgeBaseQnA = useSelector(
+    (state: RootState) => state.agentBuilder.knowledgeBaseQnA
+  );
+  const [open, setOpen] = useState(false);
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [alias, setAlias] = useState("");
+  const [question, setQuestion] = useState("");
+  const [answer, setAnswer] = useState("");
+  const [searchTerm, setSearchTerm] = useState<string>("");
+  const [libraryDialogOpen, setLibraryDialogOpen] = useState(false);
+  const [showRightGradient, setShowRightGradient] = useState(true);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Filter QnA based on search term (alias, question, or answer)
+  const filteredQnA = useMemo(() => {
+    if (!searchTerm.trim()) {
+      return knowledgeBaseQnA;
+    }
+    const lowerSearchTerm = searchTerm.toLowerCase();
+    return knowledgeBaseQnA.filter(
+      (item) =>
+        item.qna_alias.toLowerCase().includes(lowerSearchTerm) ||
+        item.question.toLowerCase().includes(lowerSearchTerm) ||
+        item.answer.toLowerCase().includes(lowerSearchTerm)
+    );
+  }, [knowledgeBaseQnA, searchTerm]);
+
+  const sortedQnA = useMemo(() => {
+    return [...filteredQnA]
+      .map((item) => ({
+        item,
+        originalIndex: knowledgeBaseQnA.findIndex(
+          (q) => q.qna_alias === item.qna_alias,
+        ),
+      }))
+      .sort(
+        (a, b) =>
+          new Date(b.item.lastUpdated).getTime() -
+          new Date(a.item.lastUpdated).getTime(),
+      );
+  }, [filteredQnA, knowledgeBaseQnA]);
+
+  const {
+    currentPage,
+    totalPages,
+    hasNext,
+    hasPrev,
+    total,
+    pageSize,
+    pageSizeOptions,
+    paginatedItems: currentQnA,
+    handlePageChange,
+    handlePageSizeChange,
+    resetPage,
+  } = useClientSideTablePagination(sortedQnA);
+
+  useEffect(() => {
+    resetPage();
+  }, [searchTerm, resetPage]);
+
+  useEffect(() => {
+    const scrollContainer = scrollContainerRef.current;
+    if (!scrollContainer) return;
+
+    const handleScroll = () => {
+      const { scrollLeft, scrollWidth, clientWidth } = scrollContainer;
+      // Check if we're at or near the end (within 5px threshold)
+      const isAtEnd = scrollLeft + clientWidth >= scrollWidth - 5;
+      setShowRightGradient(!isAtEnd);
+    };
+
+    // Check initial state
+    handleScroll();
+
+    scrollContainer.addEventListener("scroll", handleScroll);
+    // Also check on resize
+    window.addEventListener("resize", handleScroll);
+
+    return () => {
+      scrollContainer.removeEventListener("scroll", handleScroll);
+      window.removeEventListener("resize", handleScroll);
+    };
+  }, [currentQnA]);
+
+  // Function to highlight matching text in alias
+  const highlightMatch = (text: string, searchTerm: string) => {
+    if (!searchTerm.trim()) {
+      return text;
+    }
+
+    const lowerText = text.toLowerCase();
+    const lowerSearchTerm = searchTerm.toLowerCase();
+    const index = lowerText.indexOf(lowerSearchTerm);
+
+    if (index === -1) {
+      return text;
+    }
+
+    const beforeMatch = text.substring(0, index);
+    const match = text.substring(index, index + searchTerm.length);
+    const afterMatch = text.substring(index + searchTerm.length);
+
+    return (
+      <>
+        {beforeMatch}
+        <span className="bg-serene-purple/80 text-white font-semibold">
+          {match}
+        </span>
+        {afterMatch}
+      </>
+    );
+  };
+
+  const emptyMessage = searchTerm
+    ? `No entries found matching "${searchTerm}"`
+    : "No QnA entries added yet";
+
+  const handleRowClick = (aliasName: string) => {
+    const itemIndex = knowledgeBaseQnA.findIndex(
+      (item) => item.qna_alias.toLowerCase() === aliasName.toLowerCase()
+    );
+
+    if (itemIndex !== -1) {
+      const item = knowledgeBaseQnA[itemIndex];
+      if (item.status === "pending_attach") {
+        toast.info("Library items cannot be edited here");
+        return;
+      }
+      setSelectedIndex(itemIndex);
+      setAlias(item.qna_alias);
+      setQuestion(item.question);
+      setAnswer(item.answer);
+      setOpen(true);
+    }
+  };
+
+  const handleUpdate = () => {
+    if (selectedIndex !== null && question.trim() && answer.trim()) {
+      dispatch(
+        updateKnowledgeBaseQnA({
+          index: selectedIndex,
+          qna: {
+            qna_alias: alias.trim(),
+            question: question.trim(),
+            answer: answer.trim(),
+            lastUpdated: new Date().toISOString(),
+            status: "new",
+          },
+        })
+      );
+      setOpen(false);
+      setSelectedIndex(null);
+    }
+  };
+
+  const handleRemove = (aliasName: string) => {
+    // Find the item by alias name in the Redux store
+    const itemIndex = knowledgeBaseQnA.findIndex(
+      (item) => item.qna_alias.toLowerCase() === aliasName.toLowerCase()
+    );
+
+    if (itemIndex !== -1) {
+      dispatch(removeKnowledgeBaseQnA(itemIndex));
+    }
+  };
+
+  const handleAttachFromLibrary = (items: AgentKbLibraryPick[]) => {
+    const existingKbIds = new Set(
+      knowledgeBaseQnA.map((item) => item.kb_id).filter(Boolean),
+    );
+    const existingAliases = new Set(
+      knowledgeBaseQnA.map((item) => item.qna_alias.toLowerCase()),
+    );
+
+    const newRows: QnA[] = items
+      .filter(
+        (item) =>
+          !existingKbIds.has(item.kb_id) &&
+          !existingAliases.has(item.label.toLowerCase()),
+      )
+      .map((item) => ({
+        kb_id: item.kb_id,
+        qna_alias: item.label,
+        question: "",
+        answer: "",
+        lastUpdated: new Date().toISOString(),
+        status: "pending_attach",
+      }));
+
+    if (newRows.length === 0) {
+      toast.info("Selected Q&A entries are already in your list");
+      return;
+    }
+
+    dispatch(setKnowledgeBaseQnA([...newRows, ...knowledgeBaseQnA]));
+    toast.success(
+      `${newRows.length} Q&A entr${newRows.length === 1 ? "y" : "ies"} added from library`,
+    );
+  };
+
+  return (
+    <>
+      <div className="w-full mt-[12px] overflow-hidden">
+        {/* Search Bar */}
+        <div className="flex items-center justify-between mb-4 px-0">
+          <div className="lg:text-[14px] text-[12px] font-bold text-deep-onyx dark:text-pure-mist">
+            QnA Entries ({knowledgeBaseQnA.length})
+            {searchTerm && (
+              <span className="text-gray-500 dark:text-gray-400 font-normal ml-1">
+                ({filteredQnA.length} found)
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <OutlineButton
+              className="text-[12px] font-bold px-3 py-1 h-8"
+              onClick={() => setLibraryDialogOpen(true)}
+            >
+              <BookOpen className="mr-0 md:mr-1" size={14} />
+              <span className="hidden md:inline">From library</span>
+            </OutlineButton>
+            {onAddMore && (
+              <OutlineButton
+                className="text-[12px] font-bold px-3 py-1 h-8"
+                onClick={onAddMore}
+              >
+                <span className="text-[18px]">+</span>{" "}
+                <span className="hidden md:inline">Add More</span>
+              </OutlineButton>
+            )}
+            <div className="relative w-[200px]">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-gray-500" />
+              <CustomInput
+                type="text"
+                placeholder="Search entries..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-9 pr-3 py-2 text-[11px] h-8"
+              />
+            </div>
+          </div>
+        </div>
+
+        <TablePaginationControls
+          currentPage={currentPage}
+          totalPages={totalPages}
+          hasNext={hasNext}
+          hasPrev={hasPrev}
+          total={total}
+          pageSize={pageSize}
+          pageSizeOptions={pageSizeOptions}
+          onPageChange={handlePageChange}
+          onPageSizeChange={handlePageSizeChange}
+        />
+
+        <div className="relative">
+            <div
+              ref={scrollContainerRef}
+              className="overflow-x-auto md:overflow-visible"
+            >
+              <div className="inline-block min-w-full align-middle">
+                <Table className="min-w-[600px] lg:min-w-full">
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="min-w-[120px] lg:min-w-[100px] lg:max-w-[200px] font-[600] py-2 lg:px-4 px-0 whitespace-nowrap">
+                        QnA alias
+                      </TableHead>
+                      <TableHead className="min-w-[120px] pl-4 md:pl-8 lg:pl-12 font-[600] py-2 lg:px-4 px-0 whitespace-nowrap">
+                        Status
+                      </TableHead>
+                      <TableHead className="min-w-[200px] pl-4 md:pl-8 lg:pl-12 font-[600] py-2 lg:px-4 px-0 whitespace-nowrap">
+                        Last updated
+                      </TableHead>
+                      <TableHead className="w-[60px] md:w-[80px] text-right font-[600] py-2 lg:px-4 px-0 whitespace-nowrap"></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {currentQnA.length === 0 ? (
+                      <TableRow className="hover:bg-transparent">
+                        <TableCell
+                          colSpan={4}
+                          className="py-10 text-center text-[12px] text-gray-500 dark:text-gray-400"
+                        >
+                          {emptyMessage}
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                    currentQnA.map(({ item, originalIndex }, displayIndex) => {
+                      const alias = item.qna_alias || `QnA ${displayIndex + 1}`;
+                      const matchesAlias =
+                        searchTerm.trim() &&
+                        item.qna_alias
+                          .toLowerCase()
+                          .includes(searchTerm.toLowerCase());
+
+                      return (
+                        <TableRow
+                          key={item.qna_alias || `qna-${originalIndex}`}
+                          onClick={() => handleRowClick(item.qna_alias)}
+                          className="cursor-pointer hover:bg-serene-purple/10 dark:hover:bg-serene-purple/20 hover:text-serene-purple dark:hover:text-serene-purple transition-all duration-200"
+                        >
+                          <TableCell className="font-medium min-w-[120px] lg:min-w-[100px] lg:max-w-[200px] py-2 lg:px-4 px-0 text-[12px] whitespace-nowrap">
+                            <div className="truncate">
+                              {matchesAlias
+                                ? highlightMatch(alias, searchTerm)
+                                : alias}
+                            </div>
+                          </TableCell>
+                          <TableCell className="min-w-[120px] pl-4 md:pl-8 lg:pl-12 py-2 lg:px-4 px-0 text-[12px] whitespace-nowrap">
+                            <KbStatusBadge
+                              status={getQnAAgentKbDisplayStatus(item)}
+                            />
+                          </TableCell>
+                          <TableCell className="min-w-[200px] pl-4 md:pl-8 lg:pl-12 py-2 lg:px-4 px-0 text-[12px] whitespace-nowrap">
+                            {formatDateTime12hr(item.lastUpdated)}
+                          </TableCell>
+                          <TableCell className="w-[60px] md:w-[80px] text-right py-2 lg:px-4 px-0 whitespace-nowrap">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRemove(item.qna_alias);
+                              }}
+                              className="p-2 rounded-[8px] text-danger-red hover:bg-danger-red hover:text-white transition-colors cursor-pointer"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+            {showRightGradient && currentQnA.length > 0 && (
+              <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-white dark:from-black dark:via-black/80 to-transparent pointer-events-none z-10 md:hidden" />
+            )}
+          </div>
+      </div>
+
+      <Sheet
+        open={open}
+        onOpenChange={(isOpen) => {
+          setOpen(isOpen);
+          if (!isOpen) {
+            setSelectedIndex(null);
+            setAlias("");
+            setQuestion("");
+            setAnswer("");
+          }
+        }}
+      >
+        <SheetContent className={SHEET_CONTENT_CLASSNAME}>
+          <SheetHeader>
+            <SheetTitle>Edit QnA Entry</SheetTitle>
+            <SheetDescription className="font-medium">
+              Make changes to your QnA entry here. Click save when you&apos;re
+              done.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="grid flex-1 auto-rows-min gap-6 px-4 py-6">
+            <div className="grid gap-3">
+              <Label htmlFor="qna-alias">QnA alias</Label>
+              <CustomInput
+                id="qna-alias"
+                type="text"
+                value={alias}
+                onChange={(e) => setAlias(e.target.value)}
+                placeholder="Enter QnA alias"
+                className="w-full px-[12px] py-[10px]"
+              />
+            </div>
+            <div className="flex flex-col gap-3">
+              <div className="grid gap-3">
+                <Label htmlFor="question-content">Question</Label>
+                <CustomTextareaPrimary
+                  id="question-content"
+                  placeholder="Enter your question here..."
+                  value={question}
+                  onChange={(e) => setQuestion(e.target.value)}
+                  className="w-full"
+                  rows={4}
+                />
+              </div>
+              <div className="grid gap-3">
+                <Label htmlFor="answer-content">Answer</Label>
+                <CustomTextareaPrimary
+                  id="answer-content"
+                  placeholder="Enter your answer here..."
+                  value={answer}
+                  onChange={(e) => setAnswer(e.target.value)}
+                  className="w-full"
+                  rows={4}
+                />
+              </div>
+            </div>
+          </div>
+          <SheetFooter className="flex-col gap-2">
+            <PrimaryButton
+              type="button"
+              onClick={handleUpdate}
+              disabled={!question.trim() || !answer.trim()}
+              className="w-full text-[12px] font-semibold"
+            >
+              Save changes
+            </PrimaryButton>
+            <SheetClose asChild>
+              <CancelButton
+                type="button"
+                className="w-full text-[12px] font-semibold "
+              >
+                Cancel
+              </CancelButton>
+            </SheetClose>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
+
+      <AgentKbPickFromLibraryDialog
+        open={libraryDialogOpen}
+        onOpenChange={setLibraryDialogOpen}
+        sourceType="qa_pair"
+        excludeKbIds={knowledgeBaseQnA
+          .map((q) => q.kb_id)
+          .filter((id): id is string => Boolean(id))}
+        onConfirm={handleAttachFromLibrary}
+      />
+    </>
+  );
+}

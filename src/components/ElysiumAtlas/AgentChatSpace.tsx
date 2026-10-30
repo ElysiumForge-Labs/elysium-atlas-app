@@ -1,0 +1,185 @@
+import { useAppSelector, useAppDispatch, store } from "@/store";
+import { useCallback, useEffect, useRef, useState } from "react";
+import ChatHeader from "./ChatHeader";
+import MainChatSpace from "./MainChatSpace";
+import ChatFooter from "./ChatFooter";
+import VisitorHandoverDialog from "./VisitorHandoverDialog";
+import fastApiAxios from "@/utils/fastapi_axios";
+import {
+  setAgentFields,
+  setIsFetching,
+  setConversationChain,
+  setHumanConversationStarted,
+} from "@/store/reducers/agentChatSlice";
+import {
+  buildInitialConversationChain,
+  mergeFetchedConversationChain,
+} from "@/utils/conversationMessageUtils";
+import type { VisitorHandoverState } from "@/types/humanHandover";
+import { parseVisitorHandoverFromSessionData } from "@/utils/humanHandoverVisitorUtils";
+import { parseVisitorTakeoverFromSessionData } from "@/utils/visitorTakeoverUtils";
+import { useAiSocket } from "@/hooks/useAiSocket";
+import { useVisitorHandover } from "@/hooks/useVisitorHandover";
+
+export default function AgentChatSpace() {
+  const {
+    agent_id,
+    chat_session_id,
+    visitor_at,
+    isAgentOpen,
+    isFetching,
+    primary_color,
+    text_color,
+  } = useAppSelector((state) => state.agentChat);
+
+  const [initialHandoverState, setInitialHandoverState] =
+    useState<VisitorHandoverState | null>(null);
+
+  const { emit, status } = useAiSocket({ autoConnect: false });
+
+  const {
+    handover,
+    isSubmitting: isHandoverSubmitting,
+    isDeclining: isHandoverDeclining,
+    submitContact,
+    declineContact,
+  } = useVisitorHandover({
+    agentId: agent_id,
+    chatSessionId: chat_session_id,
+    emit,
+    socketConnected: status === "connected",
+    initialState: initialHandoverState,
+  });
+
+  const dispatch = useAppDispatch();
+
+  const fetchChatSession = useCallback(
+    async (options?: { silent?: boolean }) => {
+      if (!agent_id || !chat_session_id) return;
+
+      if (!options?.silent) {
+        dispatch(setIsFetching(true));
+      }
+
+      try {
+        const payload = {
+          agent_id: agent_id,
+          fields: [
+            "agent_name",
+            "agent_icon",
+            "welcome_message",
+            "placeholder_text",
+            "primary_color",
+            "secondary_color",
+            "text_color",
+            "quick_prompts",
+            "agent_status",
+          ],
+          chat_session_id: chat_session_id,
+          visitor_at: visitor_at,
+          source: "web",
+        };
+
+        const response = await fastApiAxios.post(
+          "/elysium-agents/elysium-atlas/agent/v1/get-agent-fields",
+          payload,
+        );
+
+        const agentData = response.data;
+
+        if (agentData.success === true) {
+          const agentFields = agentData.agent_fields || {};
+          const chat_session_data = agentData.chat_session_data || {};
+          const sessionMessages = chat_session_data.messages;
+
+          setInitialHandoverState(
+            parseVisitorHandoverFromSessionData(chat_session_data),
+          );
+
+          const activeTakeover =
+            parseVisitorTakeoverFromSessionData(chat_session_data);
+          if (activeTakeover) {
+            dispatch(setHumanConversationStarted(activeTakeover));
+          }
+
+          dispatch(
+            setAgentFields({
+              agent_name:
+                chat_session_data.agent_name || agentFields.agent_name || "",
+              agent_icon: agentFields.agent_icon || null,
+              welcome_message: agentFields.welcome_message || "",
+              placeholder_text: agentFields.placeholder_text || "",
+              primary_color: agentFields.primary_color || "",
+              secondary_color: agentFields.secondary_color || "",
+              text_color: agentFields.text_color || "",
+              quick_prompts: agentFields.quick_prompts || [],
+              agent_status: agentFields.agent_status || "",
+            }),
+          );
+
+          const fetchedChain = buildInitialConversationChain(
+            sessionMessages,
+            agentFields.welcome_message || "",
+            chat_session_id,
+          );
+          const currentChain = store.getState().agentChat.conversation_chain;
+
+          dispatch(
+            setConversationChain(
+              mergeFetchedConversationChain(currentChain, fetchedChain),
+            ),
+          );
+        } else {
+          console.warn("API response indicates failure:", agentData);
+        }
+      } catch (error) {
+        console.error("Error fetching agent fields:", error);
+      } finally {
+        if (!options?.silent) {
+          dispatch(setIsFetching(false));
+        }
+      }
+    },
+    [agent_id, chat_session_id, visitor_at, dispatch],
+  );
+
+  useEffect(() => {
+    fetchChatSession();
+  }, [fetchChatSession]);
+
+  // Re-fetch history when the visitor re-opens the widget after closing it
+  const prevAgentOpenRef = useRef(isAgentOpen);
+  useEffect(() => {
+    const wasOpen = prevAgentOpenRef.current;
+    prevAgentOpenRef.current = isAgentOpen;
+
+    if (isAgentOpen && !wasOpen && agent_id && chat_session_id) {
+      fetchChatSession({ silent: true });
+    }
+  }, [isAgentOpen, agent_id, chat_session_id, fetchChatSession]);
+
+  return (
+    <>
+      <div className="h-[100dvh] w-full flex items-center justify-center bg-indigo-50">
+        <div className="lg:w-[440px] lg:h-[580px] md:w-full md:h-[100dvh] w-full h-[100dvh] shadow-lg lg:rounded-[16px] md:rounded-none rounded-none bg-white relative overflow-hidden">
+          <div className="flex flex-col h-full w-full">
+            <ChatHeader />
+            <MainChatSpace handover={handover} />
+            <ChatFooter />
+          </div>
+          {!isFetching && (
+            <VisitorHandoverDialog
+              handover={handover}
+              primaryColor={primary_color}
+              textColor={text_color}
+              isSubmitting={isHandoverSubmitting}
+              isDeclining={isHandoverDeclining}
+              onSubmit={submitContact}
+              onDecline={declineContact}
+            />
+          )}
+        </div>
+      </div>
+    </>
+  );
+}

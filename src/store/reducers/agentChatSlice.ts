@@ -1,0 +1,232 @@
+import { createSlice, PayloadAction } from "@reduxjs/toolkit";
+import {
+  dedupeSystemNotices,
+  hasSystemNotice,
+} from "@/utils/conversationMessageUtils";
+
+interface Message {
+  message_id: string;
+  /** MongoDB _id- used for mark-chat-message-read API */
+  _id?: string;
+  role: "user" | "agent" | "human" | "system";
+  content: string;
+  created_at: string;
+  read_at?: string | null;
+}
+
+interface GeoData {
+  country_name: string | null;
+  country_flag: string | null;
+  district: string | null;
+  ip: string | null;
+  time_zone: string | null;
+}
+
+interface AgentChatState {
+  chat_session_id: string;
+  agent_id: string;
+  theme: "light" | "dark";
+  agent_name: string;
+  agent_icon: string | null;
+  welcome_message: string;
+  placeholder_text: string;
+  primary_color: string;
+  secondary_color: string;
+  text_color: string;
+  quick_prompts: string[];
+  agent_status: string;
+  visitor_at: string | null;
+  isFetching: boolean;
+  isAgentOpen: boolean;
+  conversation_chain: Message[];
+  chatMode: "human" | "ai";
+  isTyping: boolean;
+  in_conversation_with: string | null;
+  in_conversation_with_name: string | null;
+  geoData: GeoData | null;
+}
+
+const initialState: AgentChatState = {
+  chat_session_id: "",
+  agent_id: "",
+  theme: "light",
+  agent_name: "",
+  agent_icon: null,
+  welcome_message: "",
+  placeholder_text: "",
+  primary_color: "",
+  secondary_color: "",
+  text_color: "",
+  quick_prompts: [],
+  agent_status: "",
+  visitor_at: null,
+  isFetching: false,
+  isAgentOpen: false,
+  conversation_chain: [],
+  chatMode: "ai",
+  isTyping: false,
+  in_conversation_with: null,
+  in_conversation_with_name: null,
+  geoData: null,
+};
+
+const agentChatSlice = createSlice({
+  name: "agentChat",
+  initialState,
+  reducers: {
+    setChatSessionId: (state, action: PayloadAction<string>) => {
+      state.chat_session_id = action.payload;
+    },
+    setAgentId: (state, action: PayloadAction<string>) => {
+      state.agent_id = action.payload;
+    },
+    setTheme: (state, action: PayloadAction<"light" | "dark">) => {
+      state.theme = action.payload;
+    },
+    setAgentFields: (
+      state,
+      action: PayloadAction<{
+        agent_name: string;
+        agent_icon: string | null;
+        welcome_message: string;
+        placeholder_text: string;
+        primary_color: string;
+        secondary_color: string;
+        text_color: string;
+        quick_prompts: string[];
+        agent_status: string;
+      }>,
+    ) => {
+      state.agent_name = action.payload.agent_name;
+      state.agent_icon = action.payload.agent_icon;
+      state.welcome_message = action.payload.welcome_message;
+      state.placeholder_text = action.payload.placeholder_text;
+      state.primary_color = action.payload.primary_color;
+      state.secondary_color = action.payload.secondary_color;
+      state.text_color = action.payload.text_color;
+      state.quick_prompts = action.payload.quick_prompts;
+      state.agent_status = action.payload.agent_status;
+    },
+    setIsFetching: (state, action: PayloadAction<boolean>) => {
+      state.isFetching = action.payload;
+    },
+    setIsAgentOpen: (state, action: PayloadAction<boolean>) => {
+      state.isAgentOpen = action.payload;
+    },
+    setVisitorAt: (state, action: PayloadAction<string | null>) => {
+      state.visitor_at = action.payload;
+    },
+    setConversationChain: (state, action: PayloadAction<Message[]>) => {
+      state.conversation_chain = dedupeSystemNotices(action.payload);
+    },
+    addMessage: (state, action: PayloadAction<Message>) => {
+      const message = action.payload;
+      if (
+        message.role === "system" &&
+        hasSystemNotice(state.conversation_chain, message.content)
+      ) {
+        return;
+      }
+      state.conversation_chain.push(message);
+    },
+    markChatMessageAsRead: (
+      state,
+      action: PayloadAction<{
+        _id?: string | null;
+        message_id?: string;
+        read_at: string;
+      }>,
+    ) => {
+      const { _id, message_id, read_at } = action.payload;
+      const message = state.conversation_chain.find(
+        (m) =>
+          (_id && m._id === _id) || (message_id && m.message_id === message_id),
+      );
+      if (message) {
+        message.read_at = read_at;
+      }
+    },
+    setChatMode: (state, action: PayloadAction<"human" | "ai">) => {
+      state.chatMode = action.payload;
+    },
+    setIsTyping: (state, action: PayloadAction<boolean>) => {
+      state.isTyping = action.payload;
+    },
+    setInConversationWith: (state, action: PayloadAction<string | null>) => {
+      state.in_conversation_with = action.payload;
+      if (!action.payload) {
+        state.in_conversation_with_name = null;
+      }
+    },
+    setInConversationWithName: (state, action: PayloadAction<string | null>) => {
+      state.in_conversation_with_name = action.payload;
+    },
+    setHumanConversationStarted: (
+      state,
+      action: PayloadAction<{
+        in_conversation_with: string;
+        in_conversation_with_name?: string | null;
+      }>,
+    ) => {
+      state.in_conversation_with = action.payload.in_conversation_with;
+      state.in_conversation_with_name =
+        action.payload.in_conversation_with_name ?? null;
+      state.chatMode = "human";
+      state.isTyping = false;
+    },
+    clearHumanConversation: (state) => {
+      state.in_conversation_with = null;
+      state.in_conversation_with_name = null;
+      state.chatMode = "ai";
+    },
+    setGeoData: (state, action: PayloadAction<GeoData | null>) => {
+      state.geoData = action.payload;
+    },
+    resetAgentChat: (state) => {
+      state.chat_session_id = "";
+      state.agent_id = "";
+      state.theme = "light";
+      state.agent_name = "";
+      state.agent_icon = null;
+      state.welcome_message = "";
+      state.placeholder_text = "";
+      state.primary_color = "";
+      state.secondary_color = "";
+      state.text_color = "";
+      state.quick_prompts = [];
+      state.agent_status = "";
+      state.visitor_at = null;
+      state.isFetching = false;
+      state.isAgentOpen = false;
+      state.conversation_chain = [];
+      state.chatMode = "ai";
+      state.isTyping = false;
+      state.in_conversation_with = null;
+      state.in_conversation_with_name = null;
+      state.geoData = null;
+    },
+  },
+});
+
+export const {
+  setChatSessionId,
+  setAgentId,
+  setTheme,
+  setAgentFields,
+  setIsFetching,
+  setIsAgentOpen,
+  setVisitorAt,
+  setConversationChain,
+  addMessage,
+  markChatMessageAsRead,
+  setChatMode,
+  setIsTyping,
+  setInConversationWith,
+  setInConversationWithName,
+  setHumanConversationStarted,
+  clearHumanConversation,
+  setGeoData,
+  resetAgentChat,
+} = agentChatSlice.actions;
+
+export const agentChatReducer = agentChatSlice.reducer;

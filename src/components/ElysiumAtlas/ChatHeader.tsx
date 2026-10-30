@@ -1,0 +1,96 @@
+"use client";
+
+import { useAppSelector, useAppDispatch } from "@/store";
+import Image from "next/image";
+import { X } from "lucide-react";
+import { setIsAgentOpen } from "@/store/reducers/agentChatSlice";
+import { isAgentDisabled } from "@/utils/agentStatus";
+import ChatMoreOptions from "@/components/ElysiumAtlas/ChatMoreOptions";
+
+export default function ChatHeader() {
+  const {
+    agent_icon,
+    agent_name,
+    agent_status,
+    isFetching,
+    primary_color,
+    text_color,
+    in_conversation_with,
+    in_conversation_with_name,
+  } = useAppSelector((state) => state.agentChat);
+  const dispatch = useAppDispatch();
+  const isOffline = isAgentDisabled(agent_status);
+  const isLiveHuman = Boolean(in_conversation_with);
+  const headerTitle = isLiveHuman
+    ? in_conversation_with_name?.trim() || "Team member"
+    : agent_name || "Agent";
+
+  const handleClose = () => {
+    dispatch(setIsAgentOpen(false));
+    window.parent.postMessage({ type: "close_chat" }, "*");
+  };
+  return (
+    <div
+      className="flex items-center justify-between px-[16px] py-[8px] lg:rounded-t-[16px] md:rounded-t-none rounded-t-none w-full"
+      style={{ backgroundColor: primary_color }}
+    >
+      <div className="flex items-center gap-[10px] min-w-0 flex-1">
+        {isFetching ? (
+          <div className="w-8 h-8 rounded-full bg-gray-200 animate-pulse"></div>
+        ) : agent_icon ? (
+          <Image
+            src={agent_icon}
+            alt={agent_name || "Agent"}
+            width={32}
+            height={32}
+            className="rounded-full w-[30px] h-[30px] object-cover flex-shrink-0"
+            quality={100}
+          />
+        ) : (
+          <div
+            className="w-8 h-8 rounded-full bg-black flex-shrink-0 flex items-center justify-center text-white font-semibold text-sm shadow-sm"
+            style={{ backgroundColor: primary_color, color: text_color }}
+          >
+            {agent_name?.charAt(0)?.toUpperCase() || "A"}
+          </div>
+        )}
+        {isFetching ? (
+          <div className="h-4 w-24 bg-gray-200 animate-pulse rounded"></div>
+        ) : (
+          <div className="flex min-w-0 flex-col">
+            <span
+              className="font-semibold text-gray-700 text-sm truncate"
+              style={{ color: text_color }}
+            >
+              {headerTitle}
+            </span>
+            {isLiveHuman ? (
+              <span
+                className="text-[10px] font-medium opacity-80"
+                style={{ color: text_color }}
+              >
+                Live agent
+              </span>
+            ) : isOffline ? (
+              <span
+                className="text-[10px] font-medium opacity-80"
+                style={{ color: text_color }}
+              >
+                Offline
+              </span>
+            ) : null}
+          </div>
+        )}
+      </div>
+      <div className="flex gap-1 flex-shrink-0">
+        <ChatMoreOptions textColor={text_color} disabled={isOffline} />
+        <button
+          className="p-1.5 text-gray-400 hover:outline-[2px] outline-gray-100 rounded-full transition-colors cursor-pointer"
+          onClick={handleClose}
+        >
+          <X size={14} color={text_color} />
+        </button>
+      </div>
+    </div>
+  );
+}
